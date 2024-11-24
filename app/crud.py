@@ -1,9 +1,10 @@
+from typing import Optional
+
 from sqlalchemy.orm import Session
 from app import models, schemas
 from passlib.context import CryptContext
 from datetime import datetime
 from fastapi import HTTPException
-import asyncio
 from app.websocket_manager import manager
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -61,6 +62,56 @@ def delete_user(db: Session, user_id: int) -> bool:
 
 def get_all_users(db: Session):
     return db.query(models.User).all()
+
+
+def filter_users(
+        db: Session,
+        name: Optional[str] = None,
+        role: Optional[str] = None,
+        office: Optional[str] = None,
+        sort_by: str = "id",
+        sort_order: str = "asc",
+        limit: int = 10,
+        offset: int = 0
+) -> list[models.User]:
+    """
+    Фильтрует и сортирует пользователей по заданным критериям.
+
+    Аргументы:
+        db (Session): Сессия базы данных.
+        name (Optional[str]): Фильтр по имени.
+        role (Optional[str]): Фильтр по роли.
+        office (Optional[str]): Фильтр по офису.
+        sort_by (str): Поле для сортировки. По умолчанию "id".
+        sort_order (str): Порядок сортировки ("asc" или "desc"). По умолчанию "asc".
+        limit (int): Максимальное количество записей.
+        offset (int): Смещение для пагинации.
+
+    Возвращает:
+        list[models.User]: Список отфильтрованных и отсортированных пользователей.
+    """
+    query = db.query(models.User)
+
+    if name:
+        query = query.filter(models.User.name.ilike(f"%{name}%"))
+    if role:
+        query = query.filter(models.User.role == role)
+    if office:
+        query = query.filter(models.User.office.ilike(f"%{office}%"))
+
+    # Сортировка
+    sort_field = getattr(models.User, sort_by, None)
+    if not sort_field:
+        raise HTTPException(status_code=400, detail=f"Поле '{sort_by}' не существует для сортировки.")
+
+    if sort_order == "desc":
+        sort_field = sort_field.desc()
+    elif sort_order != "asc":
+        raise HTTPException(status_code=400, detail="Порядок сортировки должен быть 'asc' или 'desc'.")
+
+    query = query.order_by(sort_field)
+
+    return query.offset(offset).limit(limit).all()
 
 
 def update_refresh_token(db: Session, user_id: int, refresh_token: str):

@@ -1,11 +1,10 @@
 import uuid
 import uvicorn
 import jwt
-import asyncio
-import sys
 from fastapi import FastAPI, Depends, HTTPException, Path, Request
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError
+from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Base, User
 from sqlalchemy.orm import Session
 from app import crud, schemas, auth, models
@@ -15,13 +14,11 @@ from app.crud import pwd_context, create_user
 from datetime import timedelta
 from fastapi.middleware.cors import CORSMiddleware
 from app.schemas import UserCreate
-from typing import List
+from typing import List, Optional
 from fastapi import WebSocket, WebSocketDisconnect
 import logging
 from app.websocket_manager import manager
 
-if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 logger = logging.getLogger(__name__)
 
 app = FastAPI(
@@ -210,21 +207,88 @@ def get_users(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)
     return users_with_tokens
 
 
-@app.get("/users", response_model=List[schemas.User])
-def get_users(
+@app.get("/users/filter", response_model=List[schemas.User])
+def filter_users(
+    name: Optional[str] = None,
+    role: Optional[str] = None,
+    office: Optional[str] = None,
+    sort_by: str = "id",
+    sort_order: str = "asc",
+    limit: int = 10,
+    offset: int = 0,
     token: str = Depends(oauth2_scheme),
     db: Session = Depends(get_db),
-    limit: int = 10,  # Ограничение по умолчанию
-    offset: int = 0,  # Смещение по умолчанию
 ):
-    # Проверяем текущего пользователя
+    """
+    Фильтрует и сортирует пользователей по имени, роли, офису и другим параметрам.
+
+    Аргументы:
+        name (Optional[str]): Фильтр по имени (подстрока).
+        role (Optional[str]): Фильтр по роли.
+        office (Optional[str]): Фильтр по офису (подстрока).
+        sort_by (str): Поле для сортировки. По умолчанию "id".
+        sort_order (str): Порядок сортировки ("asc" или "desc"). По умолчанию "asc".
+        limit (int): Максимальное количество записей. По умолчанию 10.
+        offset (int): Смещение для пагинации. По умолчанию 0.
+        token (str): Токен доступа для авторизации.
+        db (Session): Сессия базы данных.
+
+    Возвращает:
+        List[schemas.User]: Список отфильтрованных и отсортированных пользователей с токенами.
+    """
     current_user = auth.get_current_user(token, db)
     auth.is_admin(current_user)  # Доступ только администраторам
 
-    # Получаем пользователей с пагинацией
-    users = crud.get_users_with_pagination(db=db, limit=limit, offset=offset)
+    users = crud.filter_users(
+        db=db, name=name, role=role, office=office, sort_by=sort_by, sort_order=sort_order, limit=limit, offset=offset
+    )
 
-    return users
+    # Добавляем токен каждому пользователю
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    users_with_tokens = []
+    for user in users:
+        access_token = auth.create_access_token(
+            data={"sub": user.login}, expires_delta=access_token_expires
+        )
+        user_data = user.__dict__.copy()
+        user_data["token"] = access_token
+        users_with_tokens.append(user_data)
+
+    return users_with_tokens
+
+
+
+@app.get("/users", response_model=List[schemas.User])
+def get_users(
+    limit: int = 10,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+):
+    """
+    Возвращает список всех пользователей с токенами и поддержкой пагинации.
+
+    Аргументы:
+        limit (int): Максимальное количество записей. По умолчанию 10.
+        offset (int): Смещение для пагинации. По умолчанию 0.
+        db (Session): Синхронная сессия базы данных.
+
+    Возвращает:
+        List[schemas.User]: Список пользователей с токенами.
+    """
+    users = db.query(models.User).offset(offset).limit(limit).all()
+
+    # Добавляем токен каждому пользователю
+    access_token_expires = timedelta(minutes=auth.ACCESS_TOKEN_EXPIRE_MINUTES)
+    users_with_tokens = []
+    for user in users:
+        access_token = auth.create_access_token(
+            data={"sub": user.login}, expires_delta=access_token_expires
+        )
+        user_data = user.__dict__.copy()
+        user_data["token"] = access_token
+        users_with_tokens.append(user_data)
+
+    return users_with_tokens
 
 
 @app.post("/admin/register_user", response_model=schemas.User, status_code=201)
@@ -259,7 +323,7 @@ def delete_user(
             status_code=405,detail=f"User with ID {user_id} not found"
         )
 
-    return {"detail": f"User with ID {user_id} successfully deleted"}
+    return {"detail": f"Пользователь ID {user_id} успешно удален"}
 
 
 # @app.post("/messages", response_model=schemas.Message)
