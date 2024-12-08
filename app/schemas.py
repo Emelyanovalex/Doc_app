@@ -3,16 +3,13 @@ from typing import Optional
 from datetime import datetime
 from enum import Enum
 
-class PriorityEnum(str, Enum):
-    """
-    Перечисление приоритетов для сообщений и уведомлений.
+class StatusEnum(str, Enum):
+    UNREAD = "unread"
+    READ = "read"
 
-    Значения:
-        PRIMARY: Обычный приоритет.
-        DANGER: Высокий приоритет.
-    """
-    PRIMARY = "primary"
-    DANGER = "danger"
+
+class GetUserMessagesRequest(BaseModel):
+    user_id: int
 
 
 # Схемы для пользователя
@@ -36,7 +33,6 @@ class UserBase(BaseModel):
     login: str
     office: Optional[str] = Field(None, description="Офис пользователя")
     birthdate: Optional[datetime] = Field(None, description="Дата рождения пользователя")
-    document: Optional[str] = Field(None, description="Документ пользователя")
     role: Optional[str] = Field("user", description="Роль пользователя (по умолчанию 'user')")
     token: Optional[str] = Field(None, description="Токен доступа")
     last_login: Optional[datetime] = Field(None, description="Последний вход пользователя")
@@ -60,7 +56,6 @@ class UserCreate(BaseModel):
     pas: str
     office: Optional[str] = None
     birthdate: Optional[datetime] = None
-    document: Optional[str] = None
     role: Optional[str] = "user"
 
 
@@ -94,10 +89,9 @@ class Message(BaseModel):
     id: int
     message: str
     message_time: datetime
-    message_sender_id: int = Field(..., description="ID отправителя")
-    message_receiver_id: int = Field(..., description="ID получателя")
-    is_read: bool = Field(False, description="Статус прочитанности")
-    priority: PriorityEnum = Field(PriorityEnum.PRIMARY, description="Приоритет сообщения")
+    message_sender: int = Field(..., description="ID отправителя")
+    message_receiver: int = Field(..., description="ID получателя")
+    message_status: StatusEnum = Field(StatusEnum.UNREAD, description="Статус сообщения")
 
     class Config:
         from_attributes = True
@@ -120,10 +114,9 @@ class Notification(BaseModel):
     id: int
     notification: str
     notification_time: datetime
-    notification_sender_id: int = Field(..., description="ID отправителя уведомления")
-    notification_receiver_id: int = Field(..., description="ID получателя уведомления")
-    is_read: bool = Field(False, description="Статус прочитанности уведомления")
-    priority: PriorityEnum = Field(PriorityEnum.PRIMARY, description="Приоритет уведомления")
+    notification_sender: int = Field(..., description="ID отправителя уведомления")
+    notification_receiver: int = Field(..., description="ID получателя уведомления")
+    notification_status: StatusEnum = Field(StatusEnum.UNREAD, description="Статус уведомления")
 
     class Config:
         from_attributes = True

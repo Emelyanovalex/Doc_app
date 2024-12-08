@@ -1,10 +1,7 @@
-import uuid
+import datetime
 import uvicorn
-import jwt
 from fastapi import FastAPI, Depends, HTTPException, Path, Request
 from fastapi.security import OAuth2PasswordRequestForm
-from jose import JWTError
-from sqlalchemy.ext.asyncio import AsyncSession
 from app.models import Base, User
 from sqlalchemy.orm import Session
 from app import crud, schemas, auth, models
@@ -31,7 +28,6 @@ origins = [
     "http://192.168.1.108:5173",
     "http://localhost:5173",
     "http://127.0.0.1:5173",
-    "http://192.168.1.170:5173"
 ]
 app.add_middleware(
     CORSMiddleware,
@@ -65,9 +61,8 @@ def create_admin():
             pas=hashed_password,
             office="HQ",
             role="admin",
-            birthdate=None,
-            document="ADMIN_DOC",
-            last_login=None,
+            birthdate=datetime.datetime.now(),
+            last_login=datetime.datetime.now(),
         )
         db.add(admin_user)
         db.commit()
@@ -97,55 +92,27 @@ async def websocket_messages(websocket: WebSocket):
 
 
 @app.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> dict:
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
     user_auth = auth.authenticate_user(db, form_data.username, form_data.password)
-
     if not user_auth:
         raise HTTPException(status_code=401, detail="Invalid credentials")
 
-    session_id = str(uuid.uuid4())  # Уникальный идентификатор сессии
-    tokens = auth.create_tokens(data={"sub": user_auth.login}, session_id=session_id)
+    access_token = auth.create_access_token(data={"sub": user_auth.login})
 
-    crud.update_refresh_token(db, user_auth.id, tokens["refresh_token"])
-
-    return {
-        "id": user_auth.id,
-        "access_token": tokens["access_token"],
-        "refresh_token": tokens["refresh_token"],
-        "role": user_auth.role,
-        "token_type": "bearer",
-    }
-
-
-@app.post("/token/refresh")
-def refresh_tokens(refresh_token: str, db: Session = Depends(get_db)) -> dict:
-    try:
-        payload = jwt.decode(refresh_token, SECRET_KEY, algorithms=[ALGORITHM])
-        login = payload.get("sub")
-        session_id = payload.get("session_id")
-
-        if login is None or session_id is None:
-            raise HTTPException(status_code=401, detail="Invalid token")
-    except JWTError:
-        raise HTTPException(status_code=401, detail="Invalid token")
-
-    user = crud.get_user_by_login(db, login=login)
-    if not user or not crud.verify_refresh_token(db, user.id, refresh_token):
-        raise HTTPException(status_code=401, detail="Invalid token or user not found")
-
-    # Генерация новой пары токенов
-    tokens = auth.create_tokens(data={"sub": login}, session_id=session_id)
-    crud.update_refresh_token(db, user.id, tokens["refresh_token"])
-
-    return {
-        "access_token": tokens["access_token"],
-        "refresh_token": tokens["refresh_token"],
-        "token_type": "bearer",
-    }
-
+    return {"access_token": access_token, "token_type": "bearer"}
 
 @app.post("/endpoint")
 async def receive_data(request: Request, db: Session = Depends(get_db)):
+    """
+    Эндпоинт для аутентификации пользователя и возврата непрочитанных сообщений.
+
+    Аргументы:
+        request (Request): Объект запроса от клиента.
+        db (Session): Сессия базы данных.
+
+    Возвращает:
+        dict: Информация о пользователе, токене и непрочитанных сообщениях.
+    """
     try:
         data = await request.json()
     except Exception:
@@ -168,17 +135,24 @@ async def receive_data(request: Request, db: Session = Depends(get_db)):
         data={"sub": data["login"]}, expires_delta=access_token_expires
     )
 
+    # Получение непрочитанных сообщений с именами отправителей
+    unread_messages = crud.get_unread_messages_with_sender_name(db, user_auth.id)
+
+    # Логирование
     logger.info(f"Access token expires in: {access_token_expires}")
     logger.info(f"Login: {data['login']}")
 
-    # Возвращаем данные без необходимости обновления токенов в базе
-    return {
+    # Возвращаем данные
+    return [
+        {
         "id": user_auth.id,
-        "access_token": access_token,
-        "expires_in_seconds": access_token_expires.total_seconds(),
+        "name": user_auth.name,
+        "token": access_token,
         "role": user_auth.role,
+        "ttl": access_token_expires.total_seconds(),
+        "unread_messages": unread_messages,
     }
-
+]
 
 @app.get("/all_users", response_model=List[schemas.User])
 def get_users(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
@@ -326,7 +300,7 @@ def delete_user(
     return {"detail": f"Пользователь ID {user_id} успешно удален"}
 
 
-# @app.post("/messages", response_model=schemas.Message)
+# @app.post("/create_messages", response_model=schemas.Message)
 # def send_message(
 #     message_data: schemas.Message,
 #     db: Session = Depends(get_db),
@@ -345,23 +319,22 @@ def delete_user(
 #     )
 #     return new_message
 
-@app.post("/messages", response_model=schemas.Message)
+@app.post("/send_messages", response_model=schemas.Message)
 async def send_message(
     message_data: schemas.Message,
     db: Session = Depends(get_db),
     current_user: models.User = Depends(get_current_user),
 ):
-    if current_user.id != message_data.message_sender_id:
+    if current_user.id != message_data.message_sender:
         raise HTTPException(
             status_code=403, detail="You can only send messages as yourself"
         )
 
     new_message = await crud.create_message_and_broadcast(
         db=db,
-        sender_id=current_user.id,
-        receiver_id=message_data.message_receiver_id,
+        sender=current_user.id,
+        receiver=message_data.message_receiver,
         message=message_data.message,
-        priority=message_data.priority,
     )
     return new_message
 
@@ -387,6 +360,38 @@ def get_messages_by_id(
     if not messages_data:
         raise HTTPException(status_code=404, detail="Messages not found")
     return messages_data
+
+
+@app.post("/messages")
+async def get_user_messages(
+    token: str = Depends(oauth2_scheme),  # Получение токена из заголовка Authorization
+    db: Session = Depends(get_db)
+):
+    """
+    Эндпоинт для получения информации о текущем пользователе и всех его сообщениях.
+
+    Аргументы:
+        token (str): JWT токен для аутентификации пользователя.
+        db (Session): Сессия базы данных.
+
+    Возвращает:
+        dict: Информация о текущем пользователе и всех его сообщениях.
+    """
+    # Аутентификация текущего пользователя с использованием токена
+    current_user = auth.get_current_user(token, db)
+
+    # Получение всех сообщений текущего пользователя
+    all_messages = crud.get_all_user_messages(db, current_user.id)
+
+    # Формируем JSON-ответ с данными пользователя и его сообщениями
+    return {
+        "id": current_user.id,
+        "office": current_user.office,
+        "name": current_user.name,
+        "last_login": current_user.last_login.strftime('%d-%m-%Y %H:%M:%S') if current_user.last_login else None,
+        "all_messages": all_messages,
+    }
+
 
 
 @app.get("/all_messages", response_model=list[schemas.Message])
@@ -449,10 +454,9 @@ async def create_notification(
 
     new_notification = await crud.create_notification_and_broadcast(
         db=db,
-        sender_id=current_user.id,
-        receiver_id=notification_data.notification_receiver_id,
+        sender=current_user.id,
+        receiver=notification_data.notification_receiver_id,
         notification=notification_data.notification,
-        priority=notification_data.priority,
     )
     return new_notification
 
@@ -497,4 +501,5 @@ def get_notifications(
 
 if __name__ == "__main__":
     create_admin()
+    # uvicorn.run("main:app", host="192.168.1.108", port=5173, log_level="info")
     uvicorn.run("main:app", host="127.0.0.1", port=8000, log_level="info")

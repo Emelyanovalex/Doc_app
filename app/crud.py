@@ -39,7 +39,6 @@ def create_user(db: Session, user: schemas.UserCreate):
         login=user.login,
         office=user.office,
         birthdate=user.birthdate,
-        document=user.document,
         role=user.role,  # Используем роль из данных
         pas=hashed_password,
         last_login=datetime.now(),
@@ -114,58 +113,41 @@ def filter_users(
     return query.offset(offset).limit(limit).all()
 
 
-def update_refresh_token(db: Session, user_id: int, refresh_token: str):
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    if not user:
-        return None
+def update_message_status(db: Session, message_id: int, new_status: str):
+    """
+    Обновляет статус сообщения.
 
-    user.refresh_token = refresh_token
+    Аргументы:
+        db (Session): Сессия базы данных.
+        message_id (int): ID сообщения.
+        new_status (str): Новый статус ("unread" или "read").
+
+    Возвращает:
+        models.Message: Обновлённое сообщение.
+    """
+    message = db.query(models.Message).filter(models.Message.id == message_id).first()
+    if not message:
+        raise HTTPException(status_code=404, detail="Message not found")
+
+    message.message_status = new_status
     db.commit()
-    db.refresh(user)
-    return user
+    db.refresh(message)
+    return message
 
-
-def verify_refresh_token(db: Session, user_id: int, refresh_token: str):
-    user = db.query(models.User).filter(models.User.id == user_id).first()
-    return user and user.refresh_token == refresh_token
-
-
-# Сообщения
-# def create_message(
-#     db: Session,
-#     sender_id: int,
-#     receiver_id: int,
-#     message: str,
-#     priority: str = "primary",
-# ):
-#     db_message = models.Message(
-#         message_time=datetime.now(),
-#         message=message,
-#         message_sender_id=sender_id,
-#         message_receiver_id=receiver_id,
-#         is_read=False,
-#         priority=priority
-#     )
-#     db.add(db_message)
-#     db.commit()
-#     db.refresh(db_message)
-#     return db_message
 
 async def create_message_and_broadcast(
     db: Session,
-    sender_id: int,
-    receiver_id: int,
+    sender: int,
+    receiver: int,
     message: str,
-    priority: str = "primary",
 ):
     # Создаём сообщение в базе данных
     db_message = models.Message(
         message_time=datetime.now(),
         message=message,
-        message_sender_id=sender_id,
-        message_receiver_id=receiver_id,
-        is_read=False,
-        priority=priority,
+        message_sender=sender,
+        message_receiver=receiver,
+        message_status="unread",
     )
     db.add(db_message)
     db.commit()
@@ -176,10 +158,9 @@ async def create_message_and_broadcast(
         "type": "message",
         "id": db_message.id,
         "message": db_message.message,
-        "sender_id": db_message.message_sender_id,
-        "receiver_id": db_message.message_receiver_id,
+        "sender_id": db_message.message_sender,
+        "receiver_id": db_message.message_receiver,
         "time": db_message.message_time.isoformat(),
-        "priority": db_message.priority,
     }
 
     # Отправляем сообщение через WebSocket
@@ -188,15 +169,15 @@ async def create_message_and_broadcast(
     return db_message
 
 def get_messages_by_user(db: Session, user_id: int):
-    return db.query(models.Message).filter((models.Message.message_sender_id == user_id) |
-        (models.Message.message_receiver_id == user_id)
+    return db.query(models.Message).filter((models.Message.message_sender == user_id) |
+        (models.Message.message_receiver == user_id)
     ).all()
 
 def get_messages_by_receiver_id(db: Session, user_id: int) -> list[schemas.Message]:
-    return db.query(models.Message).filter(models.Message.message_receiver_id == user_id).all()
+    return db.query(models.Message).filter(models.Message.message_receiver == user_id).all()
 
 def get_messages_for_user(db: Session, user_id: int):
-    return db.query(models.Message).filter(models.Message.message_receiver_id == user_id).all()
+    return db.query(models.Message).filter(models.Message.message_receiver == user_id).all()
 
 
 def get_message_by_id(db: Session, message_id: int):
@@ -212,41 +193,19 @@ def delete_message(db: Session, message_id: int) -> bool:
     return True
 
 
-# # Уведомления
-# def create_notification(
-#     db: Session,
-#     sender_id: int,
-#     receiver_id: int,
-#     notification: str,
-#     priority: str = "primary",
-# ):
-#     db_notification = models.Notification(
-#         notification_time=datetime.now(),
-#         notification=notification,
-#         notification_sender_id=sender_id,  # передаем ID отправителя
-#         notification_receiver_id=receiver_id,  # передаем ID получателя
-#         is_read=False,
-#         priority=priority,
-#     )
-#     db.add(db_notification)
-#     db.commit()
-#     db.refresh(db_notification)
-#     return db_notification
 async def create_notification_and_broadcast(
     db: Session,
-    sender_id: int,
-    receiver_id: int,
+    sender: int,
+    receiver: int,
     notification: str,
-    priority: str = "primary",
 ):
     # Создаём уведомление
     db_notification = models.Notification(
         notification_time=datetime.now(),
         notification=notification,
-        notification_sender_id=sender_id,
-        notification_receiver_id=receiver_id,
-        is_read=False,
-        priority=priority,
+        notification_sender=sender,
+        notification_receiver=receiver,
+        notification_status="unread",
     )
     db.add(db_notification)
     db.commit()
@@ -257,10 +216,9 @@ async def create_notification_and_broadcast(
         "type": "notification",
         "id": db_notification.id,
         "notification": db_notification.notification,
-        "sender_id": db_notification.notification_sender_id,
-        "receiver_id": db_notification.notification_receiver_id,
+        "sender": db_notification.notification_sender,
+        "receiver": db_notification.notification_receiver,
         "time": db_notification.notification_time.isoformat(),
-        "priority": db_notification.priority,
     }
 
     # Отправляем уведомление через WebSocket
@@ -270,7 +228,7 @@ async def create_notification_and_broadcast(
 
 
 def get_notifications_for_user(db: Session, user_id: int):
-    return db.query(models.Notification).filter(models.Notification.notification_receiver_id == user_id).all()
+    return db.query(models.Notification).filter(models.Notification.notification_receiver == user_id).all()
 
 
 def get_notification_by_id(db: Session, notification_id: int):
@@ -278,7 +236,7 @@ def get_notification_by_id(db: Session, notification_id: int):
 
 
 def get_notification_by_receiver_id(db: Session, user_id: int) -> list[schemas.Message]:
-    return db.query(models.Notification).filter(models.Notification.notification_receiver_id == user_id).all()
+    return db.query(models.Notification).filter(models.Notification.notification_receiver== user_id).all()
 
 
 def delete_notification(db: Session, notification_id: int) -> bool:
@@ -293,22 +251,22 @@ def delete_notification(db: Session, notification_id: int) -> bool:
 
 def get_user_messages(db: Session, user_id: int):
     return db.query(models.Message).filter(
-        (models.Message.message_sender_id == user_id) |
-        (models.Message.message_receiver_id == user_id)
+        (models.Message.message_sender == user_id) |
+        (models.Message.message_receiver == user_id)
     ).all()
 
 
 def get_user_notifications(db: Session, user_id: int):
     return db.query(models.Notification).filter(
-        (models.Notification.notification_sender_id == user_id) |
-        (models.Notification.notification_receiver_id == user_id)
+        (models.Notification.notification_sender == user_id) |
+        (models.Notification.notification_receiver == user_id)
     ).all()
 
 
 def mark_message_as_read(db: Session, message_id: int, user_id: int):
     message = db.query(models.Message).filter(
         models.Message.id == message_id,
-        models.Message.message_receiver_id == user_id
+        models.Message.message_receiver == user_id
     ).first()
 
     if not message:
@@ -320,18 +278,88 @@ def mark_message_as_read(db: Session, message_id: int, user_id: int):
     return message
 
 
+def get_unread_messages_with_sender_name(db: Session, user_id: int):
+    """
+    Получает список непрочитанных сообщений для пользователя с именами отправителей.
+
+    Аргументы:
+        db (Session): Сессия базы данных.
+        user_id (int): ID пользователя.
+
+    Возвращает:
+        list[dict]: Список непрочитанных сообщений с именами отправителей.
+    """
+    # Соединяем таблицы messages и users
+    messages = (
+        db.query(models.Message, models.User.name.label("sender_name"))
+        .join(models.User, models.Message.message_sender == models.User.id)
+        .filter(models.Message.message_receiver == user_id, models.Message.message_status == "unread")
+        .all()
+    )
+
+    # Формируем ответ
+    return [
+        {
+            "message_id": message.Message.id,
+            "message_sender": message.Message.message_sender,
+            "name": message.sender_name,
+            "message_time": message.Message.message_time.strftime('DD-MM-YYYY"\n"HH24:MI:SS'),
+            "message": message.Message.message,
+        }
+        for message in messages
+    ]
+
+
+def get_all_user_messages(db: Session, user_id: int):
+    """
+    Получает все сообщения пользователя (отправленные и полученные).
+
+    Аргументы:
+        db (Session): Сессия базы данных.
+        user_id (int): ID пользователя.
+
+    Возвращает:
+        list[dict]: Список всех сообщений.
+    """
+    messages = (
+        db.query(
+            models.Message.id.label("message_id"),
+            models.Message.message.label("message"),
+            models.Message.message_time.label("message_time"),
+            models.Message.message_sender.label("message_sender"),
+            models.Message.message_receiver.label("message_receiver"),
+            models.Message.message_status.label("message_status"),  # Добавлено
+        )
+        .filter((models.Message.message_sender == user_id) | (models.Message.message_receiver == user_id))
+        .all()
+    )
+
+    # Форматируем данные
+    return [
+        {
+            "message_id": msg.message_id,
+            "message_sender": msg.message_sender,
+            "message_receiver": msg.message_receiver,
+            "message_time": msg.message_time.strftime('%d-%m-%Y %H:%M:%S') if msg.message_time else None,
+            "message": msg.message,
+            "message_status": msg.message_status,  # Теперь работает
+        }
+        for msg in messages
+    ]
+
+
 def get_users_with_pagination(db: Session, limit: int, offset: int):
     return db.query(models.User).offset(offset).limit(limit).all()
 
 
 def get_messages_with_pagination(db: Session, user_id: int, limit: int, offset: int):
     return db.query(models.Message).filter(
-        (models.Message.message_sender_id == user_id) |
-        (models.Message.message_receiver_id == user_id)
+        (models.Message.message_sender == user_id) |
+        (models.Message.message_receiver == user_id)
     ).offset(offset).limit(limit).all()
 
 
 def get_notifications_with_pagination(db: Session, user_id: int, limit: int, offset: int):
     return db.query(models.Notification).filter(
-        models.Notification.notification_receiver_id == user_id
+        models.Notification.notification_receiver == user_id
     ).offset(offset).limit(limit).all()
