@@ -1,11 +1,13 @@
 from typing import Optional
-
+from fastapi.responses import JSONResponse
+from app.models import Message, User
 from sqlalchemy.orm import Session
 from app import models, schemas
 from passlib.context import CryptContext
 from datetime import datetime
 from fastapi import HTTPException
 from app.websocket_manager import manager
+from app.exceptions import MESSAGE_NOT_FOUND, USER_NOT_FOUND
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
@@ -127,7 +129,7 @@ def update_message_status(db: Session, message_id: int, new_status: str):
     """
     message = db.query(models.Message).filter(models.Message.id == message_id).first()
     if not message:
-        raise HTTPException(status_code=404, detail="Message not found")
+        raise MESSAGE_NOT_FOUND
 
     message.message_status = new_status
     db.commit()
@@ -264,15 +266,29 @@ def get_user_notifications(db: Session, user_id: int):
 
 
 def mark_message_as_read(db: Session, message_id: int, user_id: int):
+    """
+    Отмечает сообщение как прочитанное, если оно принадлежит текущему пользователю.
+
+    Аргументы:
+        db (Session): Сессия базы данных.
+        message_id (int): ID сообщения.
+        user_id (int): ID текущего пользователя.
+
+    Возвращает:
+        models.Message: Обновлённое сообщение.
+
+    Исключения:
+        HTTPException: Если сообщение не найдено или пользователь не авторизован.
+    """
     message = db.query(models.Message).filter(
         models.Message.id == message_id,
-        models.Message.message_receiver == user_id
+        models.Message.message_receiver == user_id  # Убедитесь, что пользователь является получателем
     ).first()
 
     if not message:
-        raise HTTPException(status_code=404, detail="Message not found or unauthorized")
+        raise MESSAGE_NOT_FOUND
 
-    message.is_read = True
+    message.message_status = "read"  # Установить статус как "прочитано"
     db.commit()
     db.refresh(message)
     return message
@@ -303,7 +319,7 @@ def get_unread_messages_with_sender_name(db: Session, user_id: int):
             "message_id": message.Message.id,
             "message_sender": message.Message.message_sender,
             "name": message.sender_name,
-            "message_time": message.Message.message_time.strftime('DD-MM-YYYY"\n"HH24:MI:SS'),
+            "message_time": message.Message.message_time.strftime('%d-%m-%Y %H:%M:%S'),
             "message": message.Message.message,
         }
         for message in messages
@@ -319,7 +335,7 @@ def get_all_user_messages(db: Session, user_id: int):
         user_id (int): ID пользователя.
 
     Возвращает:
-        list[dict]: Список всех сообщений.
+        list[dict]: Список всех сообщений или пустая структура, если сообщений нет.
     """
     messages = (
         db.query(
@@ -328,11 +344,22 @@ def get_all_user_messages(db: Session, user_id: int):
             models.Message.message_time.label("message_time"),
             models.Message.message_sender.label("message_sender"),
             models.Message.message_receiver.label("message_receiver"),
-            models.Message.message_status.label("message_status"),  # Добавлено
+            models.Message.message_status.label("message_status"),
         )
         .filter((models.Message.message_sender == user_id) | (models.Message.message_receiver == user_id))
         .all()
     )
+
+    # Если сообщений нет, вернуть пустую структуру
+    if not messages:
+        return [{
+            "message_id": None,
+            "message_sender": None,
+            "message_receiver": None,
+            "message_time": None,
+            "message": None,
+            "message_status": None,
+        }]
 
     # Форматируем данные
     return [
@@ -342,7 +369,7 @@ def get_all_user_messages(db: Session, user_id: int):
             "message_receiver": msg.message_receiver,
             "message_time": msg.message_time.strftime('%d-%m-%Y %H:%M:%S') if msg.message_time else None,
             "message": msg.message,
-            "message_status": msg.message_status,  # Теперь работает
+            "message_status": msg.message_status,
         }
         for msg in messages
     ]
@@ -363,3 +390,40 @@ def get_notifications_with_pagination(db: Session, user_id: int, limit: int, off
     return db.query(models.Notification).filter(
         models.Notification.notification_receiver == user_id
     ).offset(offset).limit(limit).all()
+
+async def save_message(
+    db: Session,
+    message_sender: int,
+    message_receiver: int,
+    message: str,
+    message_status: str = "unread",
+) -> models.Message:
+    """
+    Сохраняет сообщение в базе данных и возвращает объект сообщения.
+    """
+    # Создаём объект сообщения
+    db_message = models.Message(
+        message_time=datetime.now(),
+        message=message,
+        message_sender=message_sender,
+        message_receiver=message_receiver,
+        message_status=message_status,
+    )
+    # Сохраняем сообщение в базе данных
+    db.add(db_message)
+    db.commit()
+    db.refresh(db_message)  # Получаем обновлённый объект из базы данных
+
+    # Уведомляем через WebSocket
+    notification_data = {
+        "detail": "New message",
+        "message_id": db_message.id,
+        "sender_id": message_sender,
+        "receiver_id": message_receiver,
+        "message": message,
+        "time": db_message.message_time.isoformat(),
+    }
+    # Рассылка уведомлений по WebSocket
+    await manager.broadcast(str(notification_data), item_id=message_receiver)
+
+    return db_message

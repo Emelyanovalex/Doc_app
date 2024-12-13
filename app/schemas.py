@@ -72,6 +72,36 @@ class User(UserBase):
         from_attributes = True
 
 
+class MessageCreate(BaseModel):
+    """
+    Схема для создания нового сообщения.
+
+    Атрибуты:
+        message (str): Текст сообщения.
+        message_sender (int): ID отправителя.
+        message_receiver (int): ID получателя.
+        message_status (str): Статус сообщения.
+    """
+    message: str
+    message_sender: int
+    message_receiver: int
+    message_status: StatusEnum = StatusEnum.UNREAD
+
+
+class MessageStatus(BaseModel):
+    """
+    Схема для создания нового сообщения.
+
+    Атрибуты:
+        message_sender (int): ID отправителя.
+        message_receiver (int): ID получателя.
+        message_status (str): Статус сообщения.
+    """
+    message_sender: int
+    message_receiver: int
+    message_status: StatusEnum = StatusEnum.UNREAD
+
+
 # Схемы для сообщений
 class Message(BaseModel):
     """
@@ -89,9 +119,9 @@ class Message(BaseModel):
     id: int
     message: str
     message_time: datetime
-    message_sender: int = Field(..., description="ID отправителя")
-    message_receiver: int = Field(..., description="ID получателя")
-    message_status: StatusEnum = Field(StatusEnum.UNREAD, description="Статус сообщения")
+    message_sender: int
+    message_receiver: int
+    message_status: StatusEnum
 
     class Config:
         from_attributes = True
