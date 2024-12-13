@@ -8,6 +8,7 @@ from app import crud
 from datetime import datetime, timedelta
 import os
 from fastapi.security import OAuth2PasswordBearer
+from app.exceptions import INVALID_CREDENTIALS, FORBIDDEN
 
 # Константы для генерации токенов
 SECRET_KEY = os.getenv("SECRET_KEY", "mysecretkey")
@@ -68,37 +69,20 @@ def create_access_token(data: dict, expires_delta: timedelta = None) -> str:
 
 
 def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> Any:
-    """
-    Получает текущего пользователя по access-токену.
 
-    Аргументы:
-        token (str): Токен для проверки.
-        db (Session): Сессия базы данных.
-
-    Возвращает:
-        Any: Объект пользователя.
-
-    Исключения:
-        HTTPException: Если токен недействителен или пользователь не найден.
-    """
-    credentials_exception = HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Не удалось подтвердить учетные данные.",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         login: str = payload.get("sub")
         exp = payload.get("exp")
 
         if login is None or datetime.now().timestamp() > exp:
-            raise credentials_exception
+            raise INVALID_CREDENTIALS
     except JWTError:
-        raise credentials_exception
+        raise INVALID_CREDENTIALS
 
     user = crud.get_user_by_login(db, login=login)
     if user is None:
-        raise credentials_exception
+        raise INVALID_CREDENTIALS
 
     return user
 
@@ -113,7 +97,4 @@ def is_admin(user: Any) -> None:
         HTTPException: Если пользователь не является администратором.
     """
     if user.role != "admin":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Доступ запрещен: требуется роль администратора.",
-        )
+        raise FORBIDDEN
