@@ -4,15 +4,12 @@ from datetime import datetime
 from enum import Enum
 
 class StatusEnum(str, Enum):
+    """
+    Перечисление статусов для сообщений и уведомлений.
+    """
     UNREAD = "unread"
     READ = "read"
 
-
-class GetUserMessagesRequest(BaseModel):
-    user_id: int
-
-
-# Схемы для пользователя
 class UserBase(BaseModel):
     """
     Базовая схема пользователя.
@@ -23,7 +20,6 @@ class UserBase(BaseModel):
         login (str): Логин пользователя.
         office (Optional[str]): Офис, к которому относится пользователь.
         birthdate (Optional[datetime]): Дата рождения пользователя.
-        document (Optional[str]): Документ пользователя.
         role (Optional[str]): Роль пользователя (по умолчанию "user").
         token (Optional[str]): Токен доступа (опционально).
         last_login (Optional[datetime]): Дата и время последнего входа.
@@ -37,7 +33,6 @@ class UserBase(BaseModel):
     token: Optional[str] = Field(None, description="Токен доступа")
     last_login: Optional[datetime] = Field(None, description="Последний вход пользователя")
 
-
 class UserCreate(BaseModel):
     """
     Схема для создания нового пользователя.
@@ -48,7 +43,6 @@ class UserCreate(BaseModel):
         pas (str): Пароль пользователя.
         office (Optional[str]): Офис пользователя (опционально).
         birthdate (Optional[datetime]): Дата рождения (опционально).
-        document (Optional[str]): Документ пользователя (опционально).
         role (Optional[str]): Роль пользователя (по умолчанию "user").
     """
     name: str
@@ -57,7 +51,6 @@ class UserCreate(BaseModel):
     office: Optional[str] = None
     birthdate: Optional[datetime] = None
     role: Optional[str] = "user"
-
 
 class User(UserBase):
     """
@@ -70,7 +63,6 @@ class User(UserBase):
 
     class Config:
         from_attributes = True
-
 
 class MessageCreate(BaseModel):
     """
@@ -127,26 +119,4 @@ class Message(BaseModel):
         from_attributes = True
 
 
-# Схемы для уведомлений
-class Notification(BaseModel):
-    """
-    Схема уведомления.
 
-    Атрибуты:
-        id (int): Уникальный идентификатор уведомления.
-        notification (str): Текст уведомления.
-        notification_time (datetime): Время отправки уведомления.
-        notification_sender_id (int): ID отправителя уведомления.
-        notification_receiver_id (int): ID получателя уведомления.
-        is_read (bool): Статус прочитанности уведомления.
-        priority (PriorityEnum): Приоритет уведомления.
-    """
-    id: int
-    notification: str
-    notification_time: datetime
-    notification_sender: int = Field(..., description="ID отправителя уведомления")
-    notification_receiver: int = Field(..., description="ID получателя уведомления")
-    notification_status: StatusEnum = Field(StatusEnum.UNREAD, description="Статус уведомления")
-
-    class Config:
-        from_attributes = True

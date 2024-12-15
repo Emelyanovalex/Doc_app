@@ -1,13 +1,17 @@
 from fastapi import WebSocket
-from typing import List
+from typing import List, Dict
 
 class ConnectionManager:
     """
     Менеджер для управления WebSocket-соединениями, с поддержкой разделения по item_id.
+
+    Атрибуты:
+        active_connections (Dict[int, List[WebSocket]]):
+            Словарь, где ключ - item_id, значение - список активных WebSocket-соединений для данного item_id.
     """
 
     def __init__(self):
-        self.active_connections: dict[int, List[WebSocket]] = {}
+        self.active_connections: Dict[int, List[WebSocket]] = {}
 
     async def connect(self, websocket: WebSocket, item_id: int):
         """
