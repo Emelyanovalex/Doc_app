@@ -105,8 +105,7 @@ class Message(BaseModel):
         message_time (datetime): Время отправки сообщения.
         message_sender_id (int): ID отправителя.
         message_receiver_id (int): ID получателя.
-        is_read (bool): Статус прочитанности сообщения.
-        priority (PriorityEnum): Приоритет сообщения.
+       message_status: Статус прочитанности сообщения.
     """
     id: int
     message: str
@@ -119,4 +118,37 @@ class Message(BaseModel):
         from_attributes = True
 
 
+# Схемы для задач
+class TaskCreate(BaseModel):
+    """
+       Схема сообщения.
 
+    Атрибуты:
+        id (int): Уникальный идентификатор задачи.
+        task_name (str): Название задачи.
+        task_content (str): Содержимое задачи.
+        task_executor (int): ID исполнителя задачи, ссылка на таблицу users.
+        task_director (int): ID директора задачи, ссылка на таблицу users.
+        task_progress (str): Прогресс выполнения задачи, по умолчанию "in_progress".
+        task_date (datetime): Дата создания задачи.
+        task_deadline (datetime): Дедлайн задачи.
+        task_status (str): Статус задачи.
+        task_priority (str): Приоритет задачи.
+        task_executor_role (int): Роль исполнителя задачи.
+    """
+    task_name: str
+    task_content: str
+    task_executor: int
+    task_director: int
+    task_progress: Optional[str] = "in_progress"
+    task_date: Optional[datetime] = Field(default_factory=datetime.now)
+    task_deadline: Optional[datetime]
+    task_status: str
+    task_priority: Optional[str]
+    task_executor_role: int
+
+class TaskResponse(TaskCreate):
+    id: int
+
+    class Config:
+        from_attributes = True

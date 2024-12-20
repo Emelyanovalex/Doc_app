@@ -48,3 +48,35 @@ class Message(Base):
     message_receiver = Column(Integer, ForeignKey("users.id"), nullable=False)
     message_status = Column(String, default="unread", nullable=False)
 
+class Task(Base):
+    """
+    Модель задачи.
+
+    Атрибуты:
+        id (int): Уникальный идентификатор задачи.
+        task_name (str): Название задачи.
+        task_content (str): Содержимое задачи.
+        task_executor (int): ID исполнителя задачи, ссылка на таблицу users.
+        task_director (int): ID директора задачи, ссылка на таблицу users.
+        task_progress (str): Прогресс выполнения задачи, по умолчанию "in_progress".
+        task_date (datetime): Дата создания задачи.
+        task_deadline (datetime): Дедлайн задачи.
+        task_status (str): Статус задачи.
+        task_priority (str): Приоритет задачи.
+        task_executor_role (int): Роль исполнителя задачи.
+    """
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_name = Column(String(255), nullable=False)
+    task_content = Column(String, nullable=False)
+    task_executor = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    task_director = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    task_progress = Column(String(50), default="in_progress", nullable=False)
+    task_date = Column(DateTime, default=func.now(), nullable=False)
+    task_deadline = Column(DateTime)
+    task_status = Column(String(50), nullable=False)
+    task_priority = Column(String(50))
+    task_executor_role = Column(Integer, nullable=False)
+
+

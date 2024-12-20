@@ -2,7 +2,7 @@ import datetime
 import uvicorn
 import logging
 
-from fastapi import FastAPI, Depends, Path, Request, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Depends, Path, Request, WebSocket, WebSocketDisconnect
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.responses import JSONResponse
 from app.exceptions import InvalidCredentialsException, BadRequestException, MethodNotAllowedException, \
@@ -243,13 +243,15 @@ async def send_message(
 
 @app.post("/message_status")
 async def update_all_messages_to_read(
+        request: Request,
         token: str = Depends(oauth2_scheme),  # Извлечение токена из заголовка
         db: Session = Depends(get_db)
 ):
     """
-    Обновляет статус всех сообщений текущего пользователя на "read".
+    Обновляет статус всех непрочитанных входящих сообщений текущего пользователя на "read".
 
     Аргументы:
+        request (Request): Объект запроса с JSON-данными.
         token (str): JWT токен текущего пользователя.
         db (Session): Сессия базы данных.
 
@@ -260,17 +262,28 @@ async def update_all_messages_to_read(
     current_user = auth.get_current_user(token, db)
 
     try:
+        data = await request.json()
+        message_status = data.get("message_status")
+        message_receiver = data.get("message_receiver")
+        message_sender = data.get("message_sender")
+
+        # Проверка входных данных
+        if not (message_receiver and message_sender and message_status):
+            raise BadRequestException
+
         # Обновляем статус всех сообщений, где текущий пользователь является получателем
         updated_rows = db.query(models.Message).filter(
             models.Message.message_receiver == current_user.id,
-            models.Message.message_status == "unread"  # Фильтруем только непрочитанные сообщения
-        ).update({"message_status": "read"})
+            models.Message.message_sender == message_sender,
+            models.Message.message_status == "unread"
+        ).update({"message_status": message_status})
 
         db.commit()  # Сохраняем изменения в базе данных
 
         return JSONResponse(content={"detail": "Message status updated successfully."})
-    except Exception as error:
+    except Exception:
         raise InternalServerErrorException
+
 
 
 @app.post("/messages")
@@ -328,7 +341,46 @@ async def get_all_users_and_targeted_messages(
     return users_with_messages
 
 
+@app.post("/tasks", response_model=schemas.TaskResponse)
+def create_task(
+    task_data: schemas.TaskCreate,
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(get_current_user)  # Используем модель User
+):
+    """
+    Создаёт новую задачу.
+
+    Аргументы:
+        task_data (TaskCreate): Данные новой задачи.
+        db (Session): Сессия базы данных.
+        current_user (models.User): Объект текущего пользователя.
+
+    Возвращает:
+        TaskResponse: Информация о созданной задаче.
+    """
+
+    # Создаём объект задачи
+    new_task = models.Task(
+        task_name=task_data.task_name,
+        task_content=task_data.task_content,
+        task_executor=task_data.task_executor,
+        task_director=current_user.id,
+        task_progress=task_data.task_progress,
+        task_date=task_data.task_date,
+        task_deadline=task_data.task_deadline,
+        task_status=task_data.task_status,
+        task_priority=task_data.task_priority,
+        task_executor_role=task_data.task_executor_role,
+    )
+
+    db.add(new_task)
+    db.commit()
+    db.refresh(new_task)
+
+    return new_task
+
+
 if __name__ == "__main__":
     create_admin()
-    # uvicorn.run("main:app", host="192.168.1.107", port=5173, log_level="info")
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, log_level="info")
+    uvicorn.run("main:app", host="192.168.1.107", port=5173, log_level="info")
+    # uvicorn.run("main:app", host="127.0.0.1", port=8000, log_level="info")
